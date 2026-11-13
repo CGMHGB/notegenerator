@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>林口長庚入院病歷生成神器 | CGMH Note Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-badge">CGMH</span>
+      <h1>長庚入院病歷生成神器</h1>
+    </div>
+
+    <div class="api-bar">
+      <select id="apiProvider" class="top-select" aria-label="API 引擎">
+        <option value="gemini" selected>Google Gemini</option>
+        <option value="deepseek">DeepSeek</option>
+        <option value="openai">OpenAI / 相容</option>
+      </select>
+
+      <div class="model-picker-wrap">
+        <select id="apiModel" class="top-select" aria-label="模型"></select>
+        <input type="text" id="customModelInput" class="top-input hidden" placeholder="輸入模型 ID" />
+        <button type="button" id="fetchModelsBtn" class="icon-action-btn" title="同步官方最新模型清單">🔄</button>
+      </div>
+
+      <div class="key-wrap">
+        <input type="password" id="apiKey" class="top-input key-input" placeholder="貼上 API Key..." autocomplete="off" />
+        <button type="button" id="toggleKeyVisibility" class="icon-action-btn" title="顯示/隱藏 Key">👁️</button>
+      </div>
+
+      <button type="button" id="openSectionsModalBtn" class="ghost-btn" title="瀏覽與複製兩份手冊整理之各區塊規範與模板">
+        📚 分區模板
+      </button>
+      <button type="button" id="openPromptModalBtn" class="ghost-btn" title="檢視或編輯長庚規範 System Prompt">
+        ⚙️ 系統設定
+      </button>
+    </div>
+  </header>
+
+  <!-- Minimalist Dual-Pane Workspace -->
+  <main class="workspace">
+    <!-- Left: Single Clean Paste Area -->
+    <section class="pane input-pane">
+      <div class="pane-header">
+        <h2>貼上臨床資訊</h2>
+        <button type="button" id="clearInputBtn" class="chip-btn danger-chip">清空</button>
+      </div>
+
+      <div class="toolbar-row">
+        <div class="segmented-control" id="noteModeControl">
+          <button type="button" class="seg-btn active" data-mode="adult_admission">成人入院</button>
+          <button type="button" class="seg-btn" data-mode="peds_admission">兒科 / 小兒外科</button>
+          <button type="button" class="seg-btn" data-mode="progression_soap">SOAP 病程</button>
+        </div>
+
+        <span class="speed-hint">⚡ 完整綜合模板極速生成：固定項目自動補齊・略過 PE</span>
+      </div>
+
+      <div class="primary-paste-box">
+        <textarea
+          id="rawClinicalInput"
+          placeholder="請直接在此貼上病人相關資訊（門急診紀錄、主訴、病程、過去史、Lab、影像報告皆可）...&#10;&#10;• 點「生成」：完全依照綜合兩份長庚檔案之完整總模板自動填答生成&#10;• 固定結構（ROS 11 大系統、三代家族樹、過去/個人史預設項）由本地 0ms 秒速套版&#10;• 理學檢查 (PE) 已略過；HIS 影像報告表單頭會自動清除"
+        ></textarea>
+      </div>
+
+      <div class="action-footer">
+        <button type="button" id="generateNoteBtn" class="primary-generate-btn">生成</button>
+        <button type="button" id="offlineFormatBtn" class="secondary-action-btn" title="不需 API Key 直接依規則套用長庚範本">套版</button>
+      </div>
+    </section>
+
+    <!-- Right: Generated Result -->
+    <section class="pane output-pane">
+      <div class="pane-header">
+        <div class="pane-title-wrap">
+          <h2>生成結果</h2>
+          <span id="generationStatus" class="status-pill idle">待命</span>
+        </div>
+
+        <div class="output-actions">
+          <button type="button" id="copyNoteBtn" class="action-btn primary-copy">複製</button>
+          <button type="button" id="downloadTxtBtn" class="action-btn">下載 .txt</button>
+        </div>
+      </div>
+
+      <div class="compliance-bar" id="complianceBadges">
+        <button type="button" class="c-badge pending clickable-badge" data-check="cc" title="點擊查看 主訴 (CC) 規範與模板">CC 時間</button>
+        <button type="button" class="c-badge pending clickable-badge" data-check="pi" title="點擊查看 現在病症 (PI) 規範與模板">PI 三段式</button>
+        <button type="button" class="c-badge pending clickable-badge" data-check="fh" title="點擊查看 家族史 (FH) 規範與模板">FH 家族樹</button>
+        <button type="button" class="c-badge pending clickable-badge" data-check="ros" title="點擊查看 系統整理 (ROS) 規範與模板">ROS 同步</button>
+        <button type="button" class="c-badge pending clickable-badge" data-check="imp" title="點擊查看 臨床臆斷 (Imp) 規範與模板">Imp 1,2,3</button>
+        <button type="button" class="c-badge pending clickable-badge" data-check="plan" title="點擊查看 處理計畫 (Plan) 規範與模板">Plan 術式/適應症</button>
+      </div>
+
+      <div class="output-editor-wrap">
+        <textarea
+          id="generatedOutput"
+          spellcheck="false"
+          placeholder="生成的長庚標準病歷將顯示於此，可直接微調編輯後複製貼入 HIS..."
+        ></textarea>
+      </div>
+    </section>
+  </main>
+
+  <!-- Section Templates Modal -->
+  <dialog id="sectionsModal" class="modal modal-wide">
+    <div class="modal-content sections-modal-content">
+      <div class="modal-header">
+        <div>
+          <h3>📚 林口長庚病歷分區規範與模板庫</h3>
+          <p>整合《病歷寫作注意事項》與《Dr.李明勳 / Dr.方基存 住院病歷書寫參考範本》，可單區複製或插入右側結果區</p>
+        </div>
+        <button type="button" id="closeSectionsModalBtn" class="icon-btn" aria-label="關閉">✕</button>
+      </div>
+
+      <div class="sections-body">
+        <nav class="sections-nav" id="sectionNavList" aria-label="病歷分區清單"></nav>
+
+        <div class="sections-detail">
+          <div class="section-detail-header">
+            <div>
+              <h4 id="sectionDetailTitle"></h4>
+              <p id="sectionDetailSubtitle"></p>
+            </div>
+            <div class="section-detail-actions">
+              <button type="button" id="copySectionTemplateBtn" class="primary-btn">📋 複製此區塊</button>
+              <button type="button" id="insertSectionTemplateBtn" class="modal-sec-btn">⤵️ 插入生成結果</button>
+            </div>
+          </div>
+
+          <div class="section-notes-grid">
+            <div class="note-card rules-card">
+              <h5>📌 必要格式與重點</h5>
+              <ul id="sectionRulesList"></ul>
+            </div>
+            <div class="note-card pitfalls-card">
+              <h5>⚠️ 常見錯誤避雷</h5>
+              <ul id="sectionPitfallsList"></ul>
+            </div>
+          </div>
+
+          <div class="section-template-wrap">
+            <div class="section-template-label">
+              <span>可直接複製或微調之純文字模板</span>
+              <button type="button" id="resetSectionTemplateBtn" class="link-reset-btn">還原預設文字</button>
+            </div>
+            <textarea id="sectionTemplatePreview" rows="12" spellcheck="false"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <span class="modal-note">提示：點擊右側結果區上方「CC 時間 / PI 三段式 / FH 家族樹...」徽章也可快速跳轉對應區塊</span>
+        <button type="button" id="copyFullTemplateBtn" class="modal-sec-btn">📑 複製整份空白總模板 (含目前模式)</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- System Prompt Modal -->
+  <dialog id="promptModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h3>⚙️ 林口長庚系統設定 (System Prompt)</h3>
+          <p>已內建 Dr.李明勳/Dr.方基存範本與長庚寫作注意事項，可自由檢視或微調</p>
+        </div>
+        <button type="button" id="closePromptModalBtn" class="icon-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-toolbar">
+          <button type="button" id="resetPromptBtn" class="modal-sec-btn">🔄 還原預設</button>
+          <button type="button" id="copyPromptBtn" class="modal-sec-btn">📋 複製 Prompt</button>
+        </div>
+        <textarea id="systemPromptEditor" rows="18"></textarea>
+      </div>
+      <div class="modal-footer">
+        <span class="modal-note">儲存後將套用於下一次生成</span>
+        <button type="button" id="savePromptModalBtn" class="primary-btn">儲存設定</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="templates.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
